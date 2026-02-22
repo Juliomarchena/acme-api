@@ -4,17 +4,21 @@ from sqlalchemy import create_engine, text
 
 app = FastAPI(title="ACME API")
 
+# Railway entrega mysql:// pero SQLAlchemy necesita mysql+pymysql://
 DATABASE_URL = os.environ["MYSQL_URL"]
+
+# Corrección automática del prefijo
+if DATABASE_URL.startswith("mysql://"):
+    DATABASE_URL = DATABASE_URL.replace("mysql://", "mysql+pymysql://", 1)
 
 engine = create_engine(DATABASE_URL)
 
 @app.get("/")
 def home():
-    return {"status": "API funcionando"}
+    return {"status": "API ACME funcionando correctamente"}
 
 @app.get("/producto-mas-solicitado")
 def producto_mas_solicitado():
-
     query = """
     SELECT 
         p.Descripcion AS producto,
@@ -28,8 +32,6 @@ def producto_mas_solicitado():
     ORDER BY total_unidades DESC
     LIMIT 1;
     """
-
     with engine.connect() as conn:
         result = conn.execute(text(query)).mappings().first()
-
-    return result if result else {}
+    return dict(result) if result else {}
