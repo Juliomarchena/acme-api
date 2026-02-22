@@ -270,3 +270,87 @@ def resumen():
     with engine.connect() as conn:
         result = conn.execute(text(query)).mappings().first()
     return dict(result) if result else {}
+
+
+# ─────────────────────────────────────────
+#  DATOS COMPLETOS PARA EL AGENTE
+#  (Este endpoint alimenta al agente de
+#   Copilot Studio con toda la información
+#   necesaria para responder cualquier
+#   pregunta en lenguaje natural)
+# ─────────────────────────────────────────
+
+@app.get("/datos-completos")
+def datos_completos():
+    """
+    Devuelve TODOS los datos enriquecidos de ACME en una sola llamada.
+    El agente de Copilot Studio usa este endpoint para responder
+    cualquier pregunta en lenguaje natural sin necesidad de SQL.
+    """
+    with engine.connect() as conn:
+
+        # ── Pedidos enriquecidos con todas las dimensiones ──
+        pedidos = conn.execute(text("""
+            SELECT
+                pe.Num_Pedido                                   AS num_pedido,
+                DATE_FORMAT(pe.Fecha_Pedido, '%Y-%m-%d')        AS fecha_pedido,
+                YEAR(pe.Fecha_Pedido)                           AS anio,
+                MONTH(pe.Fecha_Pedido)                          AS mes,
+                MONTHNAME(pe.Fecha_Pedido)                      AS nombre_mes,
+                c.Empresa                                       AS cliente,
+                r.Nombre                                        AS vendedor,
+                r.Cuota                                         AS cuota_vendedor,
+                o.Ciudad                                        AS oficina,
+                o.Region                                        AS region,
+                p.Descripcion                                   AS producto,
+                p.Id_Fab                                        AS fabricante,
+                pe.Cant                                         AS cantidad,
+                pe.Importe                                      AS importe,
+                p.Precio                                        AS precio_unitario,
+                p.Costo                                         AS costo_unitario,
+                ROUND((p.Precio - p.Costo) / p.Precio * 100,1) AS margen_pct,
+                ROUND(pe.Cant * p.Costo, 2)                     AS costo_total,
+                ROUND(pe.Importe - (pe.Cant * p.Costo), 2)      AS ganancia
+            FROM pedidos pe
+            JOIN clientes  c  ON pe.Clie    = c.Num_Clie
+            JOIN repventas r  ON pe.Rep     = r.Num_Empl
+            JOIN oficinas  o  ON r.Oficina_Rep = o.Oficina
+            JOIN productos p  ON pe.Fab     = p.Id_Fab
+                             AND pe.Producto = p.Id_Producto
+            ORDER BY pe.Fecha_Pedido DESC
+        """)).mappings().all()
+
+        # ── Inventario actual ──
+        inventario = conn.execute(text("""
+            SELECT
+                Descripcion  AS producto,
+                Id_Fab       AS fabricante,
+                Precio       AS precio,
+                Costo        AS costo,
+                Existencias  AS stock,
+                ROUND((Precio - Costo) / Precio * 100, 1) AS margen_pct
+            FROM productos
+            ORDER BY Existencias ASC
+        """)).mappings().all()
+
+        # ── Desempeño de vendedores ──
+        vendedores = conn.execute(text("""
+            SELECT
+                r.Nombre                                        AS vendedor,
+                r.Cuota                                         AS cuota,
+                o.Ciudad                                        AS oficina,
+                SUM(pe.Importe)                                 AS total_ventas,
+                COUNT(pe.Num_Pedido)                            AS num_pedidos,
+                ROUND(SUM(pe.Importe) / r.Cuota * 100, 1)      AS cumplimiento_pct
+            FROM repventas r
+            LEFT JOIN pedidos  pe ON r.Num_Empl    = pe.Rep
+            LEFT JOIN oficinas o  ON r.Oficina_Rep = o.Oficina
+            GROUP BY r.Nombre, r.Cuota, o.Ciudad
+            ORDER BY total_ventas DESC
+        """)).mappings().all()
+
+    return {
+        "pedidos":     [dict(r) for r in pedidos],
+        "inventario":  [dict(r) for r in inventario],
+        "vendedores":  [dict(r) for r in vendedores]
+    }
